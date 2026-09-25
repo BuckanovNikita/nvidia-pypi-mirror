@@ -4,6 +4,10 @@ This repository ships a standalone Python 3.12+ script with no runtime dependenc
 Keep the script directly runnable as well as installable through its console entrypoint.
 Use uv with pyproject.toml and uv.lock for development.
 
+Support Windows and Linux. Use Python's system CA trust through
+ssl.create_default_context(), with certificate and hostname verification enabled.
+Keep local filesystem paths portable and URL paths in POSIX form.
+
 Preserve artifact hashes, HTML link metadata, and source-relative URL paths. Never
 download package binaries during index mirroring. Small mirrors must include only
 the requested projects in the root listing. Publish local output only after all

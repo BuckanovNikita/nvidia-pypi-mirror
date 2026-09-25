@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Mirror NVIDIA's HTML package index (Python 3.12+, no runtime dependencies).
+r"""Mirror NVIDIA's HTML package index (Windows/Linux, Python 3.12+, no dependencies).
 
 Set NVIDIA_REPO to the base URL serving package files and INDEX_URL to the base
 URL serving these HTML pages. Both bases retain the original URL path beneath
@@ -15,11 +15,14 @@ Small test mirror (three packages):
 
 Only HTML is downloaded. The output directory must not already exist. It is
 published locally only after every requested page has downloaded successfully.
+HTTPS uses system CA certificates, including the Windows CA and ROOT stores.
+Certificate and hostname verification are always enabled by the CLI.
 """
 
 import argparse
 import os
 import re
+import ssl
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -124,8 +127,13 @@ def validate_base_url(value: str, name: str) -> str:
     return value.rstrip("/") + "/"
 
 
-def fetch_html(url: str, timeout: float, retries: int) -> tuple[str, str]:
+def fetch_html(
+    url: str, timeout: float, retries: int, *, context: ssl.SSLContext | None = None
+) -> tuple[str, str]:
     """Fetch HTML, retrying transient failures without downloading linked files."""
+    if context is None:
+        context = ssl.create_default_context()
+        context.set_alpn_protocols(["http/1.1"])
     request = Request(
         url,
         headers={
@@ -135,7 +143,7 @@ def fetch_html(url: str, timeout: float, retries: int) -> tuple[str, str]:
     )
     for attempt in range(retries + 1):
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=timeout, context=context) as response:
                 content_type = response.headers.get_content_type()
                 if content_type not in {
                     "text/html",
@@ -194,8 +202,15 @@ def select_projects(html: str, packages: list[str]) -> str:
 
 def local_html_path(url: str) -> Path:
     path = unquote(urlsplit(url).path).lstrip("/")
-    if "\\" in path or "\x00" in path or any(part in {".", ".."} for part in path.split("/")):
-        raise ValueError(f"Unsafe HTML path in {url}")
+    # Validate before Path interprets drive letters, device names, or NTFS streams.
+    # Apply Windows rules everywhere so mirrors remain portable without renaming URLs.
+    for part in path.split("/"):
+        if (
+            re.search(r'[<>:"\\|?*\x00-\x1f]', part)
+            or part.endswith((".", " "))
+            or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]) *(?:\..*)?", part, re.I)
+        ):
+            raise ValueError(f"Unsafe HTML path in {url}")
     if not path or path.endswith("/") or not PurePosixPath(path).suffix:
         path = path.rstrip("/") + "/index.html" if path else "index.html"
     return Path(path)
@@ -218,7 +233,11 @@ def mirror_index(
         raise ValueError("workers and timeout must be positive; retries must be nonnegative")
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"Output already exists; choose a new directory: {output}")
-    root_html, root_url = fetch_html(SOURCE_URL, timeout, retries)
+    # create_default_context loads the OS trust locations, including Windows stores.
+    # Configure once, then share the read-only context across download workers.
+    context = ssl.create_default_context()
+    context.set_alpn_protocols(["http/1.1"])
+    root_html, root_url = fetch_html(SOURCE_URL, timeout, retries, context=context)
     if packages:
         root_html = select_projects(root_html, packages)
     root_html, pending = rewrite_html(root_html, root_url, nvidia_repo, index_url)
@@ -235,7 +254,10 @@ def mirror_index(
                 batch = sorted(pending - seen)
                 seen.update(batch)
                 pending = set()
-                futures = {executor.submit(fetch_html, url, timeout, retries): url for url in batch}
+                futures = {
+                    executor.submit(fetch_html, url, timeout, retries, context=context): url
+                    for url in batch
+                }
                 for future in as_completed(futures):
                     url = futures[future]
                     html, final_url = future.result()
