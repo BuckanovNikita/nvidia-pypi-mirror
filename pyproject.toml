@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nvidia-pypi-mirror"
+version = "0.1.0"
+description = "Mirror NVIDIA's HTML Python package index with custom artifact and index URLs"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+mirror-nvidia-pypi = "mirror_nvidia_pypi:main"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["mirror_nvidia_pypi.py"]
+
+[dependency-groups]
+dev = ["mypy>=1.15", "pytest>=9.0", "ruff>=0.15"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["mirror_nvidia_pypi.py", "test_mirror_nvidia_pypi.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["test_mirror_nvidia_pypi.py"]
+addopts = "-q"
